@@ -8,14 +8,14 @@ set -euo pipefail
 # POSTs to /v1/orgDeviceActivities with ASSIGN_DEVICES activity
 # Polls activity status and downloads CSV results
 # 2025 12 11 MK ABM Server Reassignment via Device Activities
+# 2025 01 16 MK Updated with exponential backoff polling
 
 ####### VARIABLES
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOKEN_CONFIG="${SCRIPT_DIR}/config/token_config.env"
 REPORTS_DIR="${SCRIPT_DIR}/REPORTS"
 DATE=$(date +%Y%m%d)
-WAIT_BEFORE_STATUS=30
-MAX_STATUS_CHECKS=12  # Check for 6 minutes max (30s * 12)
+MAX_STATUS_CHECKS=12  # Check up to 12 times with exponential backoff (max ~2.5 min)
 
 ####### Functions
 log() {
@@ -137,6 +137,7 @@ find_server_id() {
 }
 
 ####### POST orgDeviceActivities to reassign devices
+####### POST orgDeviceActivities to reassign devices
 post_device_activity() {
     local access_token="$1"
     local mdm_server_id="$2"
@@ -179,7 +180,13 @@ post_device_activity() {
     log "INFO" "Posting orgDeviceActivities for ${#device_ids[@]} device(s) to server ${mdm_server_id}..."
     
     local response
-    response=$(call_abm_api "${access_token}" POST "/v1/orgDeviceActivities" "${payload}" 2>/dev/null)
+    response=$(curl -s -k -w "\n%{http_code}" \
+        -X "POST" \
+        -H "Authorization: Bearer ${access_token}" \
+        -H "Accept: application/json" \
+        -H "Content-Type: application/json" \
+        -d "${payload}" \
+        "https://api-business.apple.com/v1/orgDeviceActivities")
     
     local http_code
     http_code=$(echo "${response}" | sed -n '$p')
@@ -187,29 +194,34 @@ post_device_activity() {
     local body
     body=$(echo "${response}" | sed '$d')
     
+    log "DEBUG" "HTTP Code: ${http_code}"
+    log "DEBUG" "Response Body (first 500 chars): ${body:0:500}"
+    
     if [[ "${http_code}" != "201" ]]; then
         log "ERROR" "Failed to create activity (HTTP ${http_code})"
-        log "DEBUG" "Response: ${body:0:300}"
+        log "DEBUG" "Full response: ${body}"
         echo "ERROR|${http_code}|${body:0:300}"
         return 0
     fi
     
     if ! echo "${body}" | jq empty 2>/dev/null; then
         log "ERROR" "Invalid JSON response from activity creation"
+        log "DEBUG" "Body was: ${body}"
         echo "ERROR|JSON_PARSE|${body:0:300}"
         return 0
     fi
     
-    echo "OK|${body}"
+    log "DEBUG" "JSON parsed successfully"
+    echo "OK"
+    echo "${body}"
     return 0
 }
 
 ####### GET orgDeviceActivities status
+####### GET orgDeviceActivities status
 get_activity_status() {
     local access_token="$1"
     local activity_id="$2"
-    
-    log "INFO" "Fetching activity status for: ${activity_id}"
     
     local response
     response=$(call_abm_api "${access_token}" GET "/v1/orgDeviceActivities/${activity_id}" 2>/dev/null)
@@ -221,16 +233,20 @@ get_activity_status() {
     body=$(echo "${response}" | sed '$d')
     
     if [[ "${http_code}" != "200" ]]; then
-        echo "ERROR|${http_code}|${body:0:300}"
+        log "DEBUG" "get_activity_status HTTP ${http_code}"
+        echo "ERROR|${http_code}"
         return 0
     fi
     
     if ! echo "${body}" | jq empty 2>/dev/null; then
-        echo "ERROR|JSON_PARSE|${body:0:300}"
+        log "ERROR" "Invalid JSON in get_activity_status"
+        echo "ERROR|JSON_PARSE"
         return 0
     fi
     
-    echo "OK|${body}"
+    log "DEBUG" "get_activity_status parsed OK"
+    echo "OK"
+    echo "${body}"
     return 0
 }
 
@@ -433,7 +449,7 @@ for i in "${!group_keys[@]}"; do
     
     # POST activity
     activity_result=$(post_device_activity "${access_token}" "${new_server_id}" "${device_array[@]}")
-    activity_status=$(echo "${activity_result}" | head -n1 | cut -d'|' -f1)  # First line only
+    activity_status=$(echo "${activity_result}" | head -n1 | cut -d'|' -f1)
 
     if [[ "${activity_status}" != "OK" ]]; then
         log "ERROR" "Failed to create activity"
@@ -454,10 +470,9 @@ for i in "${!group_keys[@]}"; do
     fi
     
     log "INFO" "  Activity ID: ${activity_id}"
-    log "INFO" "  Waiting ${WAIT_BEFORE_STATUS} seconds before checking status..."
-    sleep ${WAIT_BEFORE_STATUS}
+    log "INFO" "  Starting status polling with exponential backoff..."
     
-    # Poll for activity completion
+    # Poll for activity completion with exponential backoff
     check_count=0
     activity_completed=0
     download_url=""
@@ -465,12 +480,23 @@ for i in "${!group_keys[@]}"; do
     while [[ ${check_count} -lt ${MAX_STATUS_CHECKS} ]]; do
         check_count=$((check_count+1))
         
+        # Calculate exponential backoff: 3s, 6s, 12s, 24s, 48s, 60s...
+        if [[ ${check_count} -eq 1 ]]; then
+            backoff_wait=3
+        else
+            backoff_wait=$((3 * (2 ** (check_count - 2))))
+            # Cap at 60 seconds to avoid excessive waits
+            [[ ${backoff_wait} -gt 60 ]] && backoff_wait=60
+        fi
+        
+        log "INFO" "  Status check ${check_count}/${MAX_STATUS_CHECKS} (waiting ${backoff_wait}s before check)..."
+        sleep ${backoff_wait}
+        
         status_result=$(get_activity_status "${access_token}" "${activity_id}")
-        status_code=$(echo "${status_result}" | head -n1 | cut -d'|' -f1)  # First line only
+        status_code=$(echo "${status_result}" | head -n1 | cut -d'|' -f1)
 
         if [[ "${status_code}" != "OK" ]]; then
             log "WARN" "Failed to get activity status (check ${check_count}/${MAX_STATUS_CHECKS})"
-            sleep 30
             continue
         fi
 
@@ -479,20 +505,17 @@ for i in "${!group_keys[@]}"; do
         cur_status=$(echo "${status_json}" | jq -r '.data.attributes.status // ""' 2>/dev/null)
         download_url=$(echo "${status_json}" | jq -r '.data.attributes.downloadUrl // ""' 2>/dev/null)
         
-        log "INFO" "  Status check ${check_count}/${MAX_STATUS_CHECKS}: ${cur_status}"
+        log "INFO" "  Status: ${cur_status}"
         
         if [[ "${cur_status}" == "COMPLETED" ]]; then
             activity_completed=1
+            log "INFO" "  ✓ Activity completed after ${check_count} check(s)"
             break
-        fi
-        
-        if [[ ${check_count} -lt ${MAX_STATUS_CHECKS} ]]; then
-            sleep 30
         fi
     done
     
     if [[ ${activity_completed} -eq 1 ]]; then
-        log "INFO" "  ✓ Activity completed!"
+        log "INFO" "  ✓ Activity completed successfully!"
         success_count=$((success_count+1))
         
         # Download CSV if available
@@ -500,12 +523,12 @@ for i in "${!group_keys[@]}"; do
             csv_output="${temp_dir}/Activity_${activity_id}.csv"
             if download_activity_csv "${download_url}" "${activity_id}" "${csv_output}"; then
                 # Copy to REPORTS_DIR
-                cp "${csv_output}" "${REPORTS_DIR}/Reassignment_Activity_${activity_id}_${DATE}.csv"
+                cp "${csv_output}" "${REPORTS_DIR}/Reassignment_Results_${token_name}_${DATE}.csv"
                 log "INFO" "  CSV saved to REPORTS"
             fi
         fi
     else
-        log "WARN" "  Activity did not complete in time (still in progress)"
+        log "WARN" "  Activity did not complete in time (max checks exceeded)"
         failure_count=$((failure_count+1))
     fi
 done

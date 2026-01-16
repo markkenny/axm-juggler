@@ -62,20 +62,18 @@ Prompts to select a CSV from /REPORTS/MacSerials_*.csv
 
 Report saved to /REPORTS/Devices_Details_$TOKEN$_YYYYMMDD as `TokenName,ServerName,InputDeviceID,ResponseID,ResponseType,addedToOrgDateTime,bluetoothMacAddress,color,deviceCapacity,deviceModel,eid,imei,meid,orderDateTime,orderNumber,partNumber,productFamily,productType,purchaseSourceId,purchaseSourceType,releasedFromOrgDateTime,serialNumber,status,updatedDateTime,wifiMacAddress`
 
+## API_Generate_MDM_Assignment.sh
+From a CSV of serials, search against all CSVs created by API_GET_MacSerials.sh Look up the serials against that ABM and show in Terminal all available MDMs prompting user to chose the MDM to re-assign to. It creates a file you can use to re-assign the Macs.
 
 ## API_POST_SerialMDM.sh
-The last one, and still a little work in progress. The Macs are moved between the MDM servers, but the reply is pending, as it takes a few seconds, so it reports a fail. But in testing, the Macs are moved.
+The Macs are reassigned between the MDM servers in an ABM server and verified as complete. 
 
 Prompts to select a CSV from /REPORTS/MacSerials_*.csv but this time it needs a fourth column, new server name: `TokenName,ServerName,DeviceID,NewServerName`
 
-### TO DO
-Option to list the available MDM servers available and move to that, rather than the CSV needing another column.
+## API_GET_MDMs_from_Serials_API.sh and API_GET_MDMs_from_Serials_Local.sh
+I went down a rabbit hole here.
 
 -----
-# TO DO
-Can we add MDM servers to ABM via API??? Standardised naming?
-
-
 # NOTES
 Check the .gitignore ! certs, config, tokens, REPORTS are added so as not to sync credentials are big reports to Git. 
 
