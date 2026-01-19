@@ -11,5 +11,12 @@ REPORTS/*
 
 .vscode/
 
+# End of https://www.gitignore.io/api/macos
+Bash/.DS_Store
 .DS_Store
+
+
+# Google Anti Gravity Review
+gemini.md
+skills.md
 
