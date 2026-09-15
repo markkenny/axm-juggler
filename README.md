@@ -8,7 +8,9 @@ Taken from [AxM_API](https://github.com/cantscript/AxM_API) which is great for "
 
 In global enterpise, there may be more than one. And with [mergers and acquistions](https://adage.com/agencies/aa-omnicom-acquires-ipg-what-you-need-to-know/) there may be more ABMs to work with! 
 
-I think I'm running into a hard limit for the Apple API at 21,000. 
+I think I'm running into a hard limit for the Apple API at 21,000.
+
+Nope, just API limits, so I've added lots more cooling.
 
 -----
 
@@ -40,38 +42,26 @@ The required folders and example credentials are provided as examples. My secret
 # USAGE
 A few automations have been written, this is what we'll be building up on.
 
-## API_GET_generic.sh
-First attempt at working with single ABMs passed to a generic curl needing a $3 for the endpoint to pull against. Was used to testing.
+## WORKFLOW_ABM_Serials_MDM_CSV_Creation
+Managing a large number of ABMs and providing reporting is this workflow. It works through all ABM servers in your /config/token_config.env and downloads all Mac serials (I skip mobile and iPads as we don't manage them) and their assigned MDM servers. It builds a consolidated CSV of all and uploads to Jamf as a script that installs the csv to /tmp/Axm/ALL_ABM_MacSerials_YYYYMMDD.csv so that can be used in lookup and assignment scripts. It will also upload to SharePoint and notify via a Teams post and email.
 
-## API_GET_MDMs.sh
-First automated call! Goes through all ABMs in /config/token_confg.env and pulls all MDM servers and their IDs in each ABM. (IDs are needed for future pulls like all Macs assigned to an MDM server). 
+We run this twice daily in about 30 mins for 50,000 serials.
 
-Report saved to /REPORTS/ABM_MDMs_YYYYMMDD_HHMMSS.csv formatted as `TokenName,ServerName,Type,ID`
+## WORKFLOW_JAMF_ABM_Lookup_Tool
+The simplest tool, checks for the /tmp/Axm/ALL_ABM_MacSerials_YYYYMMDD.csv and runs a Jamf policy to install if missing, takes a single serial, or CSV or serials and reports ABM server and MDM assignment. By working with a CSV, this is much faster than most other tools that will hit up ABM at very search.
 
-## API_GET_MacSerials.sh
-Prompts to select a CSV from /REPORTS/ABM_MDMs_* (So cut this down if you do not want to search report EVERYTHING!)
+## WORKFLOW_MDM_Manager
+The ABM Manager  will change MDM assignments, individually or in bulk, and at speed. Many Jamf parameters have been added so this script can become part of a building block. 
 
-It runs through the CSV, all ABMs and all MDM servers and reports all serial numbers. 
+**DEBUG** of course, keeps all the temp and logging files. 
 
-Report saved to /REPORTS/MacSerials_$TokenName $Servername_YYYYMMDD.csv formatted as `TokenName,ServerName,DeviceID`
+**CONFIRM** will process all serials, and run a second call to confirm. Takes longer, but if you have to be sure. 
 
-## API_GET_DeviceInfo.sh
-All detailed information for Macs. 
+**BULK_MODE** When using osascript to prompt user for a serial, or CSV of serials. Maybe you want to offer your service desk a tool to change MDM assignments, but make sure they're not changing the entire fleet! But if you're managing your fleet, you can be trusted.
 
-Prompts to select a CSV from /REPORTS/MacSerials_*.csv 
+**DRY-RUN** Of course. Go through all the steps. This is was my early stages, I used it a lot during testing.
 
-Report saved to /REPORTS/Devices_Details_$TOKEN$_YYYYMMDD as `TokenName,ServerName,InputDeviceID,ResponseID,ResponseType,addedToOrgDateTime,bluetoothMacAddress,color,deviceCapacity,deviceModel,eid,imei,meid,orderDateTime,orderNumber,partNumber,productFamily,productType,purchaseSourceId,purchaseSourceType,releasedFromOrgDateTime,serialNumber,status,updatedDateTime,wifiMacAddress`
-
-## API_Generate_MDM_Assignment.sh
-From a CSV of serials, search against all CSVs created by API_GET_MacSerials.sh Look up the serials against that ABM and show in Terminal all available MDMs prompting user to chose the MDM to re-assign to. It creates a file you can use to re-assign the Macs.
-
-## API_POST_SerialMDM.sh
-The Macs are reassigned between the MDM servers in an ABM server and verified as complete. 
-
-Prompts to select a CSV from /REPORTS/MacSerials_*.csv but this time it needs a fourth column, new server name: `TokenName,ServerName,DeviceID,NewServerName`
-
-## API_GET_MDMs_from_Serials_API.sh and API_GET_MDMs_from_Serials_Local.sh
-I went down a rabbit hole here.
+**SILENT** runs everything, but does does not prompt the user with the report afterwards. Purpose is to allow a second script to run and read the output from the assign/unassign process. Maybe you want to add those serials to a static group, or update and extension attribute or add to a policy. In our case, we change the MDM assignment, then add to a policy to run the Jamf Migrate tool to migrate the device to the new MDM server. It's like Apple ABMs Migrate policy, but in full Jamf control with pre and post migration policies. 
 
 -----
 # NOTES

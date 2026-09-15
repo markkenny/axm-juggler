@@ -370,11 +370,11 @@ Environment Variables:
   DEBUG=1          Enable verbose debugging output
 
 Examples:
-  $0 get omc
+  $0 get myToken
   $0 list
   $0 validate
-  $0 clear omc
-  DEBUG=1 $0 get omc
+  $0 clear myToken
+  DEBUG=1 $0 get myToken
 
 EOF
             exit 1
